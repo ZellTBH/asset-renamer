@@ -3,6 +3,7 @@
     background-color: rgb(18, 19, 22);
     color: rgb(225, 227, 232);
     padding: 12px;
+    min-height: 0;
 }
 
 .ar-panel {
@@ -24,6 +25,7 @@
 
 .ar-dropzone {
     min-height: 90px;
+    flex-shrink: 0;
     align-items: center;
     justify-content: center;
     border-width: 2px;
@@ -98,6 +100,7 @@
     flex-direction: row;
     flex-wrap: wrap;
     margin-top: 4px;
+    flex-shrink: 0;
 }
 
 .ar-warning {
@@ -112,4 +115,68 @@
     margin-bottom: 10px;
     -unity-background-scale-mode: scale-to-fit;
     flex-shrink: 0;
+}
+
+.ar-result {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 8px;
+}
+
+.ar-field-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.ar-help-button {
+    width: 22px;
+    margin-left: 6px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    border-width: 0;
+    color: rgba(255, 255, 255, 0.7);
+    -unity-font-style: bold;
+}
+
+.ar-help-button:hover {
+    background-color: rgba(120, 170, 255, 0.3);
+}
+
+.ar-help-panel {
+    margin-top: 6px;
+    margin-bottom: 4px;
+    padding: 8px 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+.ar-help-row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.ar-help-row--active {
+    background-color: rgba(70, 130, 255, 0.18);
+}
+
+.ar-help-name {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.ar-help-example {
+    font-size: 11px;
+    color: rgb(225, 228, 235);
+    -unity-font-style: bold;
+}
+
+.ar-row-toggle {
+    margin-left: 6px;
+    margin-right: 2px;
+    align-self: center;
 }

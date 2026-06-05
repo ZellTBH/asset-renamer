@@ -8,6 +8,7 @@ namespace AssetRenamer.Editor
         Ok,
         Unchanged,
         Collision,
-        Invalid
+        Invalid,
+        Excluded
     }
 }

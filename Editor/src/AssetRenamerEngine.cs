@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEngine;
 
 namespace AssetRenamer.Editor
 {
@@ -14,13 +15,15 @@ namespace AssetRenamer.Editor
     {
         #region Main API
 
-        public static List<AssetRenamePlan> BuildPlans(IReadOnlyList<string> assetPaths, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable)
+        public static List<AssetRenamePlan> BuildPlans(IReadOnlyList<string> assetPaths, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable, NumberPadding numberPadding)
         {
             var plans = new List<AssetRenamePlan>();
             if (assetPaths == null) return plans;
 
+            int autoWidth = numberPadding == NumberPadding.Auto ? ComputeAutoWidth(assetPaths, applyPrefix, prefixTable, normalize) : 0;
+
             for (int i = 0; i < assetPaths.Count; i++)
-                plans.Add(BuildPlan(assetPaths[i], convention, normalize: normalize, applyPrefix: applyPrefix, prefixTable));
+                plans.Add(BuildPlan(assetPaths[i], convention, normalize: normalize, applyPrefix: applyPrefix, prefixTable, numberPadding, autoWidth));
 
             ResolveCollisions(plans);
             return plans;
@@ -32,13 +35,25 @@ namespace AssetRenamer.Editor
             return string.IsNullOrEmpty(error);
         }
 
-        public static int ApplyAll(IReadOnlyList<AssetRenamePlan> plans)
+        public static int ApplyAll(IReadOnlyList<AssetRenamePlan> plans, List<RenameRecord> undo, out int failed)
         {
             int applied = 0;
+            failed = 0;
+
             for (int i = 0; i < plans.Count; i++)
             {
                 if (plans[i].m_status != RenameStatus.Ok) continue;
-                if (Apply(plans[i], out _)) applied++;
+
+                if (Apply(plans[i], out string error))
+                {
+                    applied++;
+                    undo?.Add(new RenameRecord(TargetPath(plans[i]), plans[i].m_originalName));
+                }
+                else
+                {
+                    failed++;
+                    Debug.LogError($"[Asset Renamer] Failed to rename '{plans[i].m_originalName}{plans[i].m_extension}': {error}");
+                }
             }
 
             AssetDatabase.SaveAssets();
@@ -51,18 +66,20 @@ namespace AssetRenamer.Editor
 
         #region Tools and Utilities
 
-        private static AssetRenamePlan BuildPlan(string assetPath, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable)
+        private static AssetRenamePlan BuildPlan(string assetPath, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable, NumberPadding numberPadding, int autoWidth)
         {
             string extension = Path.GetExtension(assetPath);
             string originalName = Path.GetFileNameWithoutExtension(assetPath);
 
-            string prefix = applyPrefix && prefixTable != null ? prefixTable.ResolvePrefix(assetPath) : string.Empty;
-            string body = StripKnownPrefix(originalName, prefix);
+            string body = PrepareBody(assetPath, applyPrefix, prefixTable, normalize, out string prefix);
 
-            if (normalize) body = NameNormalizer.Normalize(body);
+            string numberDigits = null;
+            if (numberPadding != NumberPadding.Off) body = ExtractTrailingNumber(body, out numberDigits);
 
             var words = NameTokenizer.Tokenize(body);
             string formatted = NameFormatter.Format(words, convention);
+
+            if (!string.IsNullOrEmpty(numberDigits)) formatted = AppendNumber(formatted, numberDigits, convention, numberPadding, autoWidth);
 
             var plan = new AssetRenamePlan
             {
@@ -97,6 +114,63 @@ namespace AssetRenamer.Editor
 
         private static string StripKnownPrefix(string name, string prefix)
             => !string.IsNullOrEmpty(prefix) && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name.Substring(prefix.Length) : name;
+
+        private static string PrepareBody(string assetPath, bool applyPrefix, AssetTypePrefixTable prefixTable, bool normalize, out string prefix)
+        {
+            string originalName = Path.GetFileNameWithoutExtension(assetPath);
+            prefix = applyPrefix && prefixTable != null ? prefixTable.ResolvePrefix(assetPath) : string.Empty;
+            string body = StripKnownPrefix(originalName, prefix);
+            if (normalize) body = NameNormalizer.Normalize(body);
+            return body;
+        }
+
+        private static string ExtractTrailingNumber(string body, out string digits)
+        {
+            digits = null;
+            if (string.IsNullOrEmpty(body)) return body;
+
+            int end = -1;
+            for (int i = body.Length - 1; i >= 0; i--)
+            {
+                if (char.IsDigit(body[i])) { end = i; break; }
+            }
+            if (end < 0) return body;
+
+            int start = end;
+            while (start > 0 && char.IsDigit(body[start - 1])) start--;
+
+            digits = body.Substring(start, end - start + 1);
+            return body.Substring(0, start) + " " + body.Substring(end + 1);
+        }
+
+        private static string AppendNumber(string formattedBody, string digits, NamingConvention convention, NumberPadding padding, int autoWidth)
+        {
+            int width = WidthFor(padding, autoWidth);
+            string padded = digits.PadLeft(width, '0');
+            string separator = NameFormatter.Separator(convention);
+            return string.IsNullOrEmpty(formattedBody) ? padded : formattedBody + separator + padded;
+        }
+
+        private static int WidthFor(NumberPadding padding, int autoWidth) => padding switch
+        {
+            NumberPadding.OneDigit => 1,
+            NumberPadding.TwoDigits => 2,
+            NumberPadding.ThreeDigits => 3,
+            NumberPadding.Auto => System.Math.Max(1, autoWidth),
+            _ => 0
+        };
+
+        private static int ComputeAutoWidth(IReadOnlyList<string> assetPaths, bool applyPrefix, AssetTypePrefixTable prefixTable, bool normalize)
+        {
+            int max = 0;
+            for (int i = 0; i < assetPaths.Count; i++)
+            {
+                string body = PrepareBody(assetPaths[i], applyPrefix, prefixTable, normalize, out _);
+                ExtractTrailingNumber(body, out string digits);
+                if (digits != null && digits.Length > max) max = digits.Length;
+            }
+            return max;
+        }
 
         private static void ResolveCollisions(List<AssetRenamePlan> plans)
         {

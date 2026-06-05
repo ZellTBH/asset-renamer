@@ -33,6 +33,21 @@ namespace AssetRenamer.Editor
             };
         }
 
+        /// <summary>
+        /// The separator a convention places between components (empty for the non-separated styles).
+        /// </summary>
+        public static string Separator(NamingConvention convention) => convention switch
+        {
+            NamingConvention.SnakeCase => "_",
+            NamingConvention.PascalSnakeCase => "_",
+            NamingConvention.CamelSnakeCase => "_",
+            NamingConvention.ScreamingSnakeCase => "_",
+            NamingConvention.KebabCase => "-",
+            NamingConvention.TrainCase => "-",
+            NamingConvention.CobolCase => "-",
+            _ => ""
+        };
+
         #endregion
 
 
