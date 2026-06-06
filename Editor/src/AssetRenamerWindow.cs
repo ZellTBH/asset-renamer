@@ -375,9 +375,13 @@ namespace AssetRenamer.Editor
 
         private void UpdateTool()
         {
+            var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(AssetRenamerWindow).Assembly);
+            string current = info != null ? info.version : "current";
+            string target = string.IsNullOrEmpty(_latestVersion) ? "latest" : _latestVersion;
+
             bool confirmed = EditorUtility.DisplayDialog(
                 "Update Asset Renamer",
-                "Re-resolve the package to the latest version from GitHub? This may trigger a recompile and reopen the window.",
+                $"Update from v{current} to v{target}? This re-resolves the package from GitHub and may trigger a recompile and reopen the window.",
                 "Update",
                 "Cancel");
             if (!confirmed) return;
