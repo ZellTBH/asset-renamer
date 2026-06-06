@@ -5,6 +5,17 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-06
+
+### Added
+- Find & replace: a case-insensitive search/replace applied to each name before formatting.
+- Custom prefix and custom suffix: free text wrapped around the formatted name, written verbatim.
+- Collapsible "Find / Replace / Affixes" section, collapsed by default, marked with an indicator when a transform is active.
+- Version readout in the footer, plus an "Update available" button that appears only when a newer version exists on the repository (reads the manifest on main once per session; git installs only).
+
+### Changed
+- Engine formatting options bundled into a RenameOptions struct (internal refactor, no behavior change).
+
 ## [0.2.0] - 2026-06-05
 
 ### Added

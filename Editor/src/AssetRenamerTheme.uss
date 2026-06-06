@@ -180,3 +180,20 @@
     margin-right: 2px;
     align-self: center;
 }
+
+.ar-advanced {
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+
+.ar-versionbar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+}
+
+.ar-version-label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+}

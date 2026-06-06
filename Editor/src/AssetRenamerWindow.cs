@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UIElements;
 
 namespace AssetRenamer.Editor
@@ -31,6 +33,7 @@ namespace AssetRenamer.Editor
             rootVisualElement.Add(_root);
             EnsurePrefixTable();
             Rebuild();
+            MaybeCheckForUpdate();
         }
 
         #endregion
@@ -99,6 +102,8 @@ namespace AssetRenamer.Editor
                 result.AddToClassList("ar-result");
                 _root.Add(result);
             }
+
+            _root.Add(BuildVersionBar());
         }
 
         private VisualElement BuildControls()
@@ -151,6 +156,33 @@ namespace AssetRenamer.Editor
             tableField.RegisterValueChangedCallback(evt => { _prefixTable = evt.newValue as AssetTypePrefixTable; Recompute(); });
             panel.Add(tableField);
             ApplyTooltip(tableField, "Maps file extensions and asset types to prefixes. Edit it to match your studio convention.");
+
+            bool advancedActive = !string.IsNullOrEmpty(_findText) || !string.IsNullOrEmpty(_customPrefix) || !string.IsNullOrEmpty(_customSuffix);
+            var advanced = new Foldout { text = advancedActive ? "Find / Replace / Affixes  *" : "Find / Replace / Affixes", value = _showAdvanced };
+            advanced.AddToClassList("ar-advanced");
+            advanced.RegisterValueChangedCallback(evt => _showAdvanced = evt.newValue);
+
+            var findField = new TextField("Find") { value = _findText, isDelayed = true };
+            findField.RegisterValueChangedCallback(evt => { _findText = evt.newValue; Recompute(); });
+            advanced.Add(findField);
+            ApplyTooltip(findField, "Text to search for in each name, applied before formatting. Case-insensitive. Leave empty to skip.");
+
+            var replaceField = new TextField("Replace") { value = _replaceText, isDelayed = true };
+            replaceField.RegisterValueChangedCallback(evt => { _replaceText = evt.newValue; Recompute(); });
+            advanced.Add(replaceField);
+            ApplyTooltip(replaceField, "Text that replaces every Find match. Leave empty to delete the matched text.");
+
+            var customPrefixField = new TextField("Custom prefix") { value = _customPrefix, isDelayed = true };
+            customPrefixField.RegisterValueChangedCallback(evt => { _customPrefix = evt.newValue; Recompute(); });
+            advanced.Add(customPrefixField);
+            ApplyTooltip(customPrefixField, "Free text inserted in front of the formatted name, after the type prefix. Written verbatim, e.g. Boss_.");
+
+            var customSuffixField = new TextField("Custom suffix") { value = _customSuffix, isDelayed = true };
+            customSuffixField.RegisterValueChangedCallback(evt => { _customSuffix = evt.newValue; Recompute(); });
+            advanced.Add(customSuffixField);
+            ApplyTooltip(customSuffixField, "Free text appended at the very end of the name. Written verbatim, e.g. _LOD0.");
+
+            panel.Add(advanced);
 
             if (_applyPrefix && _prefixTable == null) panel.Add(BuildMissingTableHint());
 
@@ -315,6 +347,93 @@ namespace AssetRenamer.Editor
             return bar;
         }
 
+        private VisualElement BuildVersionBar()
+        {
+            var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(AssetRenamerWindow).Assembly);
+
+            var bar = new VisualElement();
+            bar.AddToClassList("ar-versionbar");
+
+            string current = info != null ? info.version : null;
+            var label = new Label(info != null ? $"Asset Renamer v{current}" : "Asset Renamer (local)");
+            label.AddToClassList("ar-version-label");
+            bar.Add(label);
+
+            bool isGit = info != null && info.source == PackageSource.Git;
+            bool updateAvailable = isGit && !string.IsNullOrEmpty(_latestVersion) && IsNewer(_latestVersion, current);
+
+            if (updateAvailable)
+            {
+                var update = new Button(UpdateTool) { text = $"Update available: v{_latestVersion}" };
+                update.AddToClassList("ar-button");
+                update.AddToClassList("ar-button--primary");
+                bar.Add(update);
+            }
+
+            return bar;
+        }
+
+        private void UpdateTool()
+        {
+            bool confirmed = EditorUtility.DisplayDialog(
+                "Update Asset Renamer",
+                "Re-resolve the package to the latest version from GitHub? This may trigger a recompile and reopen the window.",
+                "Update",
+                "Cancel");
+            if (!confirmed) return;
+
+            Client.Add(GIT_URL);
+        }
+
+        private void MaybeCheckForUpdate()
+        {
+            if (_updateChecked) return;
+            _updateChecked = true;
+
+            var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(AssetRenamerWindow).Assembly);
+            if (info == null || info.source != PackageSource.Git) return;
+
+            var request = UnityWebRequest.Get(MANIFEST_URL);
+            var operation = request.SendWebRequest();
+            operation.completed += _ =>
+            {
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    try
+                    {
+                        var manifest = JsonUtility.FromJson<ManifestVersion>(request.downloadHandler.text);
+                        if (manifest != null && !string.IsNullOrEmpty(manifest.version)) _latestVersion = manifest.version;
+                    }
+                    catch { /* malformed manifest, ignore */ }
+                }
+
+                request.Dispose();
+                if (this != null) Rebuild();
+            };
+        }
+
+        private static bool IsNewer(string latest, string current)
+        {
+            int[] l = ParseVersion(latest);
+            int[] c = ParseVersion(current);
+            for (int i = 0; i < 3; i++)
+                if (l[i] != c[i]) return l[i] > c[i];
+            return false;
+        }
+
+        private static int[] ParseVersion(string version)
+        {
+            var parts = new int[3];
+            if (string.IsNullOrEmpty(version)) return parts;
+
+            string core = version.Split('-')[0];
+            string[] segments = core.Split('.');
+            for (int i = 0; i < 3 && i < segments.Length; i++)
+                int.TryParse(segments[i], out parts[i]);
+
+            return parts;
+        }
+
         private void AddPaths(string[] paths)
         {
             if (paths == null) return;
@@ -383,7 +502,20 @@ namespace AssetRenamer.Editor
 
         private List<AssetRenamePlan> BuildPlans()
         {
-            var plans = AssetRenamerEngine.BuildPlans(_paths, _convention, normalize: _normalize, applyPrefix: _applyPrefix, _prefixTable, _numberPadding);
+            var options = new RenameOptions
+            {
+                m_convention = _convention,
+                m_normalize = _normalize,
+                m_applyPrefix = _applyPrefix,
+                m_prefixTable = _prefixTable,
+                m_numberPadding = _numberPadding,
+                m_customPrefix = _customPrefix,
+                m_customSuffix = _customSuffix,
+                m_findText = _findText,
+                m_replaceText = _replaceText
+            };
+
+            var plans = AssetRenamerEngine.BuildPlans(_paths, options);
             for (int i = 0; i < plans.Count; i++)
                 if (plans[i].m_status == RenameStatus.Ok && _excluded.Contains(plans[i].m_assetPath))
                     plans[i].m_status = RenameStatus.Excluded;
@@ -461,6 +593,8 @@ namespace AssetRenamer.Editor
         private const float BANNER_ASPECT = 4f;
         private const float BANNER_ICON_HEIGHT = 110f;
         private const string DEFAULT_TABLE_PATH = "Assets/AssetTypePrefixTable.asset";
+        private const string GIT_URL = "https://github.com/ZellTBH/asset-renamer.git";
+        private const string MANIFEST_URL = "https://raw.githubusercontent.com/ZellTBH/asset-renamer/main/package.json";
         private static readonly List<string> HELP_SAMPLE = new List<string> { "wall", "torch" };
 
         [SerializeField] private NamingConvention _convention = NamingConvention.PascalCase;
@@ -474,8 +608,22 @@ namespace AssetRenamer.Editor
         [SerializeField] private string _lastResult = string.Empty;
         [SerializeField] private bool _hideUnchanged;
         [SerializeField] private List<string> _excluded = new List<string>();
+        [SerializeField] private string _customPrefix = string.Empty;
+        [SerializeField] private string _customSuffix = string.Empty;
+        [SerializeField] private string _findText = string.Empty;
+        [SerializeField] private string _replaceText = string.Empty;
+        [SerializeField] private bool _showAdvanced;
 
         private VisualElement _root;
+
+        private static bool _updateChecked;
+        private static string _latestVersion;
+
+        [System.Serializable]
+        private class ManifestVersion
+        {
+            public string version;
+        }
 
         #endregion
     }

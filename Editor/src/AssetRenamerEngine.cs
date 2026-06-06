@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 
@@ -15,15 +16,15 @@ namespace AssetRenamer.Editor
     {
         #region Main API
 
-        public static List<AssetRenamePlan> BuildPlans(IReadOnlyList<string> assetPaths, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable, NumberPadding numberPadding)
+        public static List<AssetRenamePlan> BuildPlans(IReadOnlyList<string> assetPaths, RenameOptions options)
         {
             var plans = new List<AssetRenamePlan>();
             if (assetPaths == null) return plans;
 
-            int autoWidth = numberPadding == NumberPadding.Auto ? ComputeAutoWidth(assetPaths, applyPrefix, prefixTable, normalize) : 0;
+            int autoWidth = options.m_numberPadding == NumberPadding.Auto ? ComputeAutoWidth(assetPaths, options) : 0;
 
             for (int i = 0; i < assetPaths.Count; i++)
-                plans.Add(BuildPlan(assetPaths[i], convention, normalize: normalize, applyPrefix: applyPrefix, prefixTable, numberPadding, autoWidth));
+                plans.Add(BuildPlan(assetPaths[i], options, autoWidth));
 
             ResolveCollisions(plans);
             return plans;
@@ -66,30 +67,32 @@ namespace AssetRenamer.Editor
 
         #region Tools and Utilities
 
-        private static AssetRenamePlan BuildPlan(string assetPath, NamingConvention convention, bool normalize, bool applyPrefix, AssetTypePrefixTable prefixTable, NumberPadding numberPadding, int autoWidth)
+        private static AssetRenamePlan BuildPlan(string assetPath, RenameOptions options, int autoWidth)
         {
             string extension = Path.GetExtension(assetPath);
             string originalName = Path.GetFileNameWithoutExtension(assetPath);
 
-            string body = PrepareBody(assetPath, applyPrefix, prefixTable, normalize, out string prefix);
+            string body = PrepareBody(assetPath, options, out string prefix);
 
             string numberDigits = null;
-            if (numberPadding != NumberPadding.Off) body = ExtractTrailingNumber(body, out numberDigits);
+            if (options.m_numberPadding != NumberPadding.Off) body = ExtractTrailingNumber(body, out numberDigits);
 
             var words = NameTokenizer.Tokenize(body);
-            string formatted = NameFormatter.Format(words, convention);
+            string formatted = NameFormatter.Format(words, options.m_convention);
 
-            if (!string.IsNullOrEmpty(numberDigits)) formatted = AppendNumber(formatted, numberDigits, convention, numberPadding, autoWidth);
+            if (!string.IsNullOrEmpty(numberDigits)) formatted = AppendNumber(formatted, numberDigits, options.m_convention, options.m_numberPadding, autoWidth);
+
+            string core = string.IsNullOrEmpty(formatted) ? string.Empty : WrapAffixes(formatted, options);
 
             var plan = new AssetRenamePlan
             {
                 m_assetPath = assetPath,
                 m_originalName = originalName,
                 m_extension = extension,
-                m_proposedName = string.IsNullOrEmpty(formatted) ? string.Empty : prefix + formatted
+                m_proposedName = string.IsNullOrEmpty(core) ? string.Empty : prefix + core
             };
 
-            ClassifyPlan(plan, formatted, originalName);
+            ClassifyPlan(plan, core, originalName);
             return plan;
         }
 
@@ -115,13 +118,28 @@ namespace AssetRenamer.Editor
         private static string StripKnownPrefix(string name, string prefix)
             => !string.IsNullOrEmpty(prefix) && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? name.Substring(prefix.Length) : name;
 
-        private static string PrepareBody(string assetPath, bool applyPrefix, AssetTypePrefixTable prefixTable, bool normalize, out string prefix)
+        private static string PrepareBody(string assetPath, RenameOptions options, out string prefix)
         {
             string originalName = Path.GetFileNameWithoutExtension(assetPath);
-            prefix = applyPrefix && prefixTable != null ? prefixTable.ResolvePrefix(assetPath) : string.Empty;
+            prefix = options.m_applyPrefix && options.m_prefixTable != null ? options.m_prefixTable.ResolvePrefix(assetPath) : string.Empty;
             string body = StripKnownPrefix(originalName, prefix);
-            if (normalize) body = NameNormalizer.Normalize(body);
+            body = ApplyFindReplace(body, options);
+            if (options.m_normalize) body = NameNormalizer.Normalize(body);
             return body;
+        }
+
+        private static string ApplyFindReplace(string body, RenameOptions options)
+        {
+            if (string.IsNullOrEmpty(options.m_findText)) return body;
+            string replacement = (options.m_replaceText ?? string.Empty).Replace("$", "$$");
+            return Regex.Replace(body, Regex.Escape(options.m_findText), replacement, RegexOptions.IgnoreCase);
+        }
+
+        private static string WrapAffixes(string formatted, RenameOptions options)
+        {
+            string customPrefix = options.m_customPrefix ?? string.Empty;
+            string customSuffix = options.m_customSuffix ?? string.Empty;
+            return customPrefix + formatted + customSuffix;
         }
 
         private static string ExtractTrailingNumber(string body, out string digits)
@@ -160,12 +178,12 @@ namespace AssetRenamer.Editor
             _ => 0
         };
 
-        private static int ComputeAutoWidth(IReadOnlyList<string> assetPaths, bool applyPrefix, AssetTypePrefixTable prefixTable, bool normalize)
+        private static int ComputeAutoWidth(IReadOnlyList<string> assetPaths, RenameOptions options)
         {
             int max = 0;
             for (int i = 0; i < assetPaths.Count; i++)
             {
-                string body = PrepareBody(assetPaths[i], applyPrefix, prefixTable, normalize, out _);
+                string body = PrepareBody(assetPaths[i], options, out _);
                 ExtractTrailingNumber(body, out string digits);
                 if (digits != null && digits.Length > max) max = digits.Length;
             }
