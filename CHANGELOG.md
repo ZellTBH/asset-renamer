@@ -5,6 +5,16 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-06
+
+### Added
+- Strip redundant type words: when a name already contains a word that just repeats its type prefix, it is dropped (e.g. wall_mat -> M_Wall instead of M_WallMat, Wall Prefab -> PF_Wall, TorchPF -> PF_Torch). A glued upper-case acronym tail is detached first so the tokenizer can separate it. Controlled by a "Strip redundant type words" toggle, on by default.
+- PrefixRule gains an optional aliases field listing the words that mean the same type (e.g. "material mat" for M_), so each studio can tune what counts as redundant.
+- A "Reset table to defaults" button on the tool to refresh an existing prefix table with the up-to-date built-in rules (so an older table picks up the new type aliases after upgrading).
+
+### Changed
+- Prefix table resolution refactored around a single TryResolveRule, so the prefix and its aliases come from the same matched rule (no behavior change for existing prefixes).
+
 ## [0.3.1] - 2026-06-06
 
 ### Changed

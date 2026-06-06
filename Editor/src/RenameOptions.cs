@@ -13,6 +13,7 @@ namespace AssetRenamer.Editor
         public NamingConvention m_convention;
         public bool m_normalize;
         public bool m_applyPrefix;
+        public bool m_stripRedundantTypeTokens;
         public AssetTypePrefixTable m_prefixTable;
         public NumberPadding m_numberPadding;
         public string m_customPrefix;

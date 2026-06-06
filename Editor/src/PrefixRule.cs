@@ -14,6 +14,7 @@ namespace AssetRenamer.Editor
         public PrefixMatch m_match;
         public string m_pattern;
         public string m_prefix;
+        public string m_aliases;
 
         #endregion
 
@@ -21,10 +22,14 @@ namespace AssetRenamer.Editor
         #region Main API
 
         public PrefixRule(PrefixMatch match, string pattern, string prefix)
+            : this(match, pattern, prefix, string.Empty) { }
+
+        public PrefixRule(PrefixMatch match, string pattern, string prefix, string aliases)
         {
             m_match = match;
             m_pattern = pattern;
             m_prefix = prefix;
+            m_aliases = aliases;
         }
 
         #endregion

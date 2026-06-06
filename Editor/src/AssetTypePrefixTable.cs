@@ -39,14 +39,20 @@ namespace AssetRenamer.Editor
         /// Resolves the prefix for an asset. Returns an empty string when no rule matches.
         /// </summary>
         public string ResolvePrefix(string assetPath)
+            => TryResolveRule(assetPath, out PrefixRule rule) ? rule.m_prefix : string.Empty;
+
+        public string ResolveAliases(string assetPath)
+            => TryResolveRule(assetPath, out PrefixRule rule) ? rule.m_aliases : string.Empty;
+
+        public bool TryResolveRule(string assetPath, out PrefixRule rule)
         {
-            if (string.IsNullOrEmpty(assetPath)) return string.Empty;
+            rule = default;
+            if (string.IsNullOrEmpty(assetPath)) return false;
 
             string extension = Path.GetExtension(assetPath).ToLowerInvariant();
-            string byExtension = MatchExtension(extension);
-            if (!string.IsNullOrEmpty(byExtension)) return byExtension;
+            if (TryMatchExtension(extension, out rule)) return true;
 
-            return MatchType(AssetDatabase.GetMainAssetTypeAtPath(assetPath));
+            return TryMatchType(AssetDatabase.GetMainAssetTypeAtPath(assetPath), out rule);
         }
 
         #endregion
@@ -54,19 +60,23 @@ namespace AssetRenamer.Editor
 
         #region Tools and Utilities
 
-        private string MatchExtension(string extension)
+        private bool TryMatchExtension(string extension, out PrefixRule match)
         {
             for (int i = 0; i < m_rules.Count; i++)
             {
                 var rule = m_rules[i];
                 if (rule.m_match != PrefixMatch.Extension) continue;
                 if (string.Equals(NormalizeExtension(rule.m_pattern), extension, StringComparison.OrdinalIgnoreCase))
-                    return rule.m_prefix;
+                {
+                    match = rule;
+                    return true;
+                }
             }
-            return string.Empty;
+            match = default;
+            return false;
         }
 
-        private string MatchType(Type type)
+        private bool TryMatchType(Type type, out PrefixRule match)
         {
             while (type != null)
             {
@@ -75,11 +85,15 @@ namespace AssetRenamer.Editor
                     var rule = m_rules[i];
                     if (rule.m_match != PrefixMatch.Type) continue;
                     if (string.Equals(rule.m_pattern, type.Name, StringComparison.Ordinal))
-                        return rule.m_prefix;
+                    {
+                        match = rule;
+                        return true;
+                    }
                 }
                 type = type.BaseType;
             }
-            return string.Empty;
+            match = default;
+            return false;
         }
 
         private static string NormalizeExtension(string pattern)
@@ -90,33 +104,33 @@ namespace AssetRenamer.Editor
 
         private static List<PrefixRule> BuildDefaultRules() => new List<PrefixRule>
         {
-            new PrefixRule(PrefixMatch.Extension, ".fbx", "SM_"),
-            new PrefixRule(PrefixMatch.Extension, ".obj", "SM_"),
-            new PrefixRule(PrefixMatch.Extension, ".blend", "SM_"),
-            new PrefixRule(PrefixMatch.Extension, ".prefab", "PF_"),
-            new PrefixRule(PrefixMatch.Extension, ".png", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".tga", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".psd", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".jpg", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".jpeg", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".exr", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".tif", "T_"),
-            new PrefixRule(PrefixMatch.Extension, ".wav", "SFX_"),
-            new PrefixRule(PrefixMatch.Extension, ".mp3", "SFX_"),
-            new PrefixRule(PrefixMatch.Extension, ".ogg", "SFX_"),
-            new PrefixRule(PrefixMatch.Extension, ".anim", "A_"),
-            new PrefixRule(PrefixMatch.Extension, ".controller", "AC_"),
-            new PrefixRule(PrefixMatch.Extension, ".mat", "M_"),
-            new PrefixRule(PrefixMatch.Extension, ".shader", "SH_"),
-            new PrefixRule(PrefixMatch.Extension, ".shadergraph", "SH_"),
-            new PrefixRule(PrefixMatch.Extension, ".vfx", "VFX_"),
-            new PrefixRule(PrefixMatch.Type, "Texture", "T_"),
-            new PrefixRule(PrefixMatch.Type, "Material", "M_"),
-            new PrefixRule(PrefixMatch.Type, "Mesh", "SM_"),
-            new PrefixRule(PrefixMatch.Type, "AnimationClip", "A_"),
-            new PrefixRule(PrefixMatch.Type, "AudioClip", "SFX_"),
-            new PrefixRule(PrefixMatch.Type, "Shader", "SH_"),
-            new PrefixRule(PrefixMatch.Type, "GameObject", "PF_")
+            new PrefixRule(PrefixMatch.Extension, ".fbx", "SM_", "mesh staticmesh"),
+            new PrefixRule(PrefixMatch.Extension, ".obj", "SM_", "mesh staticmesh"),
+            new PrefixRule(PrefixMatch.Extension, ".blend", "SM_", "mesh staticmesh"),
+            new PrefixRule(PrefixMatch.Extension, ".prefab", "PF_", "prefab"),
+            new PrefixRule(PrefixMatch.Extension, ".png", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".tga", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".psd", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".jpg", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".jpeg", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".exr", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".tif", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Extension, ".wav", "SFX_", "sound audio sfx"),
+            new PrefixRule(PrefixMatch.Extension, ".mp3", "SFX_", "sound audio sfx"),
+            new PrefixRule(PrefixMatch.Extension, ".ogg", "SFX_", "sound audio sfx"),
+            new PrefixRule(PrefixMatch.Extension, ".anim", "A_", "anim animation"),
+            new PrefixRule(PrefixMatch.Extension, ".controller", "AC_", "controller animatorcontroller"),
+            new PrefixRule(PrefixMatch.Extension, ".mat", "M_", "material mat"),
+            new PrefixRule(PrefixMatch.Extension, ".shader", "SH_", "shader"),
+            new PrefixRule(PrefixMatch.Extension, ".shadergraph", "SH_", "shader shadergraph"),
+            new PrefixRule(PrefixMatch.Extension, ".vfx", "VFX_", "vfx fx"),
+            new PrefixRule(PrefixMatch.Type, "Texture", "T_", "texture tex"),
+            new PrefixRule(PrefixMatch.Type, "Material", "M_", "material mat"),
+            new PrefixRule(PrefixMatch.Type, "Mesh", "SM_", "mesh staticmesh"),
+            new PrefixRule(PrefixMatch.Type, "AnimationClip", "A_", "anim animation"),
+            new PrefixRule(PrefixMatch.Type, "AudioClip", "SFX_", "sound audio sfx"),
+            new PrefixRule(PrefixMatch.Type, "Shader", "SH_", "shader"),
+            new PrefixRule(PrefixMatch.Type, "GameObject", "PF_", "prefab")
         };
 
         #endregion

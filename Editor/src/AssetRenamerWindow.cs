@@ -17,7 +17,7 @@ namespace AssetRenamer.Editor
     {
         #region Public
 
-        [MenuItem("Tools/Asset Renamer")]
+        [MenuItem("Breaking Frame/Asset Renamer")]
         public static void Open() => GetWindow<AssetRenamerWindow>("Asset Renamer").Show();
 
         #endregion
@@ -31,9 +31,20 @@ namespace AssetRenamer.Editor
             _root.AddToClassList("ar-root");
             LoadStyle();
             rootVisualElement.Add(_root);
+
+            _scroll = new ScrollView(ScrollViewMode.Vertical);
+            _scroll.AddToClassList("ar-scroll");
+            _root.Add(_scroll);
+
             EnsurePrefixTable();
             Rebuild();
             MaybeCheckForUpdate();
+        }
+
+        private void OnDisable()
+        {
+            if (_bannerTex != null) { DestroyImmediate(_bannerTex); _bannerTex = null; }
+            if (_iconTex != null) { DestroyImmediate(_iconTex); _iconTex = null; }
         }
 
         #endregion
@@ -53,27 +64,34 @@ namespace AssetRenamer.Editor
             element.Query().ForEach(child => { child.tooltip = text; });
         }
 
-        private VisualElement BuildBanner()
+        private void EnsureArt()
         {
-            var full = AssetDatabase.LoadAssetAtPath<Texture2D>(BANNER_PATH);
-            var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(BANNER_ICON_PATH);
-            if (full == null && icon == null) return null;
-
-            var banner = new VisualElement();
-            banner.AddToClassList("ar-banner");
-            banner.style.backgroundImage = new StyleBackground(full != null ? full : icon);
-            banner.RegisterCallback<GeometryChangedEvent>(evt => ApplyBannerVariant(banner, evt.newRect.width, full, icon));
-            return banner;
+            if (_bannerTex == null) _bannerTex = EmbeddedArt.LoadBanner();
+            if (_iconTex == null) _iconTex = EmbeddedArt.LoadIcon();
         }
 
-        private void ApplyBannerVariant(VisualElement banner, float width, Texture2D full, Texture2D icon)
+        private VisualElement BuildBanner()
         {
-            bool wideEnough = width >= BANNER_MIN_WIDTH && full != null;
-            var texture = wideEnough ? full : (icon != null ? icon : full);
-            if (texture != null) banner.style.backgroundImage = new StyleBackground(texture);
+            EnsureArt();
+            var full = _bannerTex;
+            var icon = _iconTex;
+            if (full == null && icon == null) return null;
 
-            float target = wideEnough ? width / BANNER_ASPECT : BANNER_ICON_HEIGHT;
-            if (Mathf.Abs(banner.resolvedStyle.height - target) > 0.5f) banner.style.height = target;
+            var banner = new Image { scaleMode = ScaleMode.ScaleToFit };
+            banner.AddToClassList("ar-banner");
+            banner.image = full != null ? full : icon;
+
+            banner.RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                float w = banner.resolvedStyle.width;
+                bool wideEnough = w >= BANNER_MIN_WIDTH && full != null;
+                var bannerTex = wideEnough ? full : (icon != null ? icon : full);
+                banner.image = bannerTex;
+                if (w > 0f && bannerTex != null && bannerTex.width > 0)
+                    banner.style.height = w * ((float)bannerTex.height / (float)bannerTex.width);
+            });
+
+            return banner;
         }
 
         private void EnsurePrefixTable()
@@ -85,25 +103,65 @@ namespace AssetRenamer.Editor
                 _prefixTable = AssetDatabase.LoadAssetAtPath<AssetTypePrefixTable>(AssetDatabase.GUIDToAssetPath(guids[0]));
         }
 
+        private void ResetPrefixTable()
+        {
+            if (_prefixTable == null) return;
+
+            bool confirmed = EditorUtility.DisplayDialog(
+                "Reset Prefix Table",
+                "Replace all rules in this table with the up-to-date defaults? Any custom rules will be lost.",
+                "Reset",
+                "Cancel");
+            if (!confirmed) return;
+
+            Undo.RecordObject(_prefixTable, "Reset Prefix Table");
+            _prefixTable.LoadDefaults();
+            EditorUtility.SetDirty(_prefixTable);
+            AssetDatabase.SaveAssets();
+            Recompute();
+        }
+
         private void Rebuild()
         {
-            if (_root == null) return;
-            _root.Clear();
+            if (_scroll == null) return;
+
+            Vector2 savedOffset = _scroll.scrollOffset;
+
+            _scroll.Clear();
+
+            var content = new VisualElement();
+            content.AddToClassList("ar-content");
+            _scroll.Add(content);
+
             var banner = BuildBanner();
-            if (banner != null) _root.Add(banner);
-            _root.Add(BuildControls());
-            _root.Add(BuildDropZone());
-            _root.Add(BuildAddSelectionButton());
-            _root.Add(BuildPreview());
-            _root.Add(BuildFooter());
+            if (banner != null) content.Add(banner);
+            content.Add(BuildControls());
+            content.Add(BuildDropZone());
+            content.Add(BuildAddSelectionButton());
+            content.Add(BuildPreview());
+            content.Add(BuildFooter());
             if (!string.IsNullOrEmpty(_lastResult))
             {
                 var result = new Label(_lastResult);
                 result.AddToClassList("ar-result");
-                _root.Add(result);
+                content.Add(result);
             }
 
-            _root.Add(BuildVersionBar());
+            content.Add(BuildVersionBar());
+
+            _scroll.schedule.Execute(() => _scroll.scrollOffset = savedOffset).ExecuteLater(0);
+        }
+
+        private VisualElement BuildGroupHeader(string title)
+        {
+            var head = new VisualElement();
+            head.AddToClassList("ar-group-head");
+
+            var label = new Label(title.ToUpperInvariant());
+            label.AddToClassList("ar-group-title");
+            head.Add(label);
+
+            return head;
         }
 
         private VisualElement BuildControls()
@@ -111,6 +169,12 @@ namespace AssetRenamer.Editor
             var panel = new VisualElement();
             panel.AddToClassList("ar-panel");
             panel.style.flexShrink = 0f;
+
+            // ---- Format group ----
+            var formatGroup = new VisualElement();
+            formatGroup.AddToClassList("ar-group");
+            formatGroup.Add(BuildGroupHeader("Format"));
+            var formatBody = new VisualElement();
 
             var conventionRow = new VisualElement();
             conventionRow.AddToClassList("ar-field-row");
@@ -126,36 +190,79 @@ namespace AssetRenamer.Editor
             ApplyTooltip(helpButton, "Preview every naming convention with a live example.");
             conventionRow.Add(helpButton);
 
-            panel.Add(conventionRow);
+            formatBody.Add(conventionRow);
 
-            if (_showConventionHelp) panel.Add(BuildConventionHelp());
+            if (_showConventionHelp) formatBody.Add(BuildConventionHelp());
 
             var numberChoices = new List<string> { "Off", "1", "01", "001", "Auto" };
             var numberField = new DropdownField("Number suffix", numberChoices, (int)_numberPadding);
             const string numberTip = "Pads the trailing number of each name.\nOff: leave numbers as-is.\n1 / 01 / 001: force a fixed width.\nAuto: pad every number to the widest one in the dropped batch (e.g. 1..15 becomes 01..15) so they sort correctly.";
             ApplyTooltip(numberField, numberTip);
             numberField.RegisterValueChangedCallback(evt => { _numberPadding = (NumberPadding)numberChoices.IndexOf(evt.newValue); Recompute(); });
-            panel.Add(numberField);
+            formatBody.Add(numberField);
 
-            var normalizeToggle = new Toggle("Normalize messy names") { value = _normalize };
+            formatGroup.Add(formatBody);
+            panel.Add(formatGroup);
+
+            // ---- Cleanup group ----
+            var cleanupGroup = new VisualElement();
+            cleanupGroup.AddToClassList("ar-group");
+            cleanupGroup.Add(BuildGroupHeader("Cleanup"));
+            var cleanupBody = new VisualElement();
+
+            var normalizeToggle = new Toggle();
+            normalizeToggle.text = "Normalize messy names";
+            normalizeToggle.value = _normalize;
+            normalizeToggle.AddToClassList("ar-toggle");
             normalizeToggle.RegisterValueChangedCallback(evt => { _normalize = evt.newValue; Recompute(); });
-            panel.Add(normalizeToggle);
+            cleanupBody.Add(normalizeToggle);
             ApplyTooltip(normalizeToggle, "Strip accents, copy markers like (1) / copie, and extra spaces before formatting.");
 
-            var prefixToggle = new Toggle("Apply type prefix") { value = _applyPrefix };
+            var prefixToggle = new Toggle();
+            prefixToggle.text = "Apply type prefix";
+            prefixToggle.value = _applyPrefix;
+            prefixToggle.AddToClassList("ar-toggle");
             prefixToggle.RegisterValueChangedCallback(evt => { _applyPrefix = evt.newValue; Recompute(); });
-            panel.Add(prefixToggle);
+            cleanupBody.Add(prefixToggle);
             ApplyTooltip(prefixToggle, "Auto-prepend a type prefix (T_ textures, SM_ meshes, PF_ prefabs...) from the table below.");
 
-            var hideToggle = new Toggle("Hide unchanged in preview") { value = _hideUnchanged };
+            var redundantToggle = new Toggle();
+            redundantToggle.text = "Strip redundant type words";
+            redundantToggle.value = _stripRedundantTypeTokens;
+            redundantToggle.AddToClassList("ar-toggle");
+            redundantToggle.RegisterValueChangedCallback(evt => { _stripRedundantTypeTokens = evt.newValue; Recompute(); });
+            cleanupBody.Add(redundantToggle);
+            ApplyTooltip(redundantToggle, "Drop words that only repeat the type prefix, e.g. wall_mat -> M_Wall instead of M_WallMat. Needs Apply type prefix.");
+
+            var hideToggle = new Toggle();
+            hideToggle.text = "Hide unchanged in preview";
+            hideToggle.value = _hideUnchanged;
+            hideToggle.AddToClassList("ar-toggle");
             hideToggle.RegisterValueChangedCallback(evt => { _hideUnchanged = evt.newValue; Recompute(); });
-            panel.Add(hideToggle);
+            cleanupBody.Add(hideToggle);
             ApplyTooltip(hideToggle, "Hide rows that already conform, to focus on what will actually change.");
+
+            cleanupGroup.Add(cleanupBody);
+            panel.Add(cleanupGroup);
+
+            // ---- Prefixes group ----
+            var prefixesGroup = new VisualElement();
+            prefixesGroup.AddToClassList("ar-group");
+            prefixesGroup.Add(BuildGroupHeader("Prefixes"));
+            var prefixesBody = new VisualElement();
 
             var tableField = new ObjectField("Type Prefix Table") { objectType = typeof(AssetTypePrefixTable), value = _prefixTable };
             tableField.RegisterValueChangedCallback(evt => { _prefixTable = evt.newValue as AssetTypePrefixTable; Recompute(); });
-            panel.Add(tableField);
+            prefixesBody.Add(tableField);
             ApplyTooltip(tableField, "Maps file extensions and asset types to prefixes. Edit it to match your studio convention.");
+
+            if (_prefixTable != null)
+            {
+                var resetTable = new Button(ResetPrefixTable) { text = "Reset table to defaults" };
+                resetTable.AddToClassList("ar-button");
+                ApplyTooltip(resetTable, "Replace this table's rules with the current built-in defaults (includes the latest type aliases). Custom rules are lost.");
+                prefixesBody.Add(resetTable);
+            }
 
             bool advancedActive = !string.IsNullOrEmpty(_findText) || !string.IsNullOrEmpty(_customPrefix) || !string.IsNullOrEmpty(_customSuffix);
             var advanced = new Foldout { text = advancedActive ? "Find / Replace / Affixes  *" : "Find / Replace / Affixes", value = _showAdvanced };
@@ -182,9 +289,12 @@ namespace AssetRenamer.Editor
             advanced.Add(customSuffixField);
             ApplyTooltip(customSuffixField, "Free text appended at the very end of the name. Written verbatim, e.g. _LOD0.");
 
-            panel.Add(advanced);
+            prefixesBody.Add(advanced);
 
-            if (_applyPrefix && _prefixTable == null) panel.Add(BuildMissingTableHint());
+            if (_applyPrefix && _prefixTable == null) prefixesBody.Add(BuildMissingTableHint());
+
+            prefixesGroup.Add(prefixesBody);
+            panel.Add(prefixesGroup);
 
             return panel;
         }
@@ -234,9 +344,17 @@ namespace AssetRenamer.Editor
             var zone = new VisualElement();
             zone.AddToClassList("ar-dropzone");
 
-            var label = new Label("Drag assets here");
-            label.AddToClassList("ar-dropzone-label");
-            zone.Add(label);
+            var icon = new VisualElement();
+            icon.AddToClassList("ar-dropzone-icon");
+            zone.Add(icon);
+
+            var dropLabel = new Label("Drag assets here");
+            dropLabel.AddToClassList("ar-dropzone-label");
+            zone.Add(dropLabel);
+
+            var types = new Label("textures · models · prefabs · audio · materials");
+            types.AddToClassList("ar-dropzone-types");
+            zone.Add(types);
 
             zone.RegisterCallback<DragUpdatedEvent>(_ => DragAndDrop.visualMode = DragAndDropVisualMode.Copy);
             zone.RegisterCallback<DragPerformEvent>(_ =>
@@ -252,38 +370,93 @@ namespace AssetRenamer.Editor
         {
             var panel = new VisualElement();
             panel.AddToClassList("ar-panel");
+            panel.AddToClassList("ar-preview");
             panel.style.flexGrow = 1f;
             panel.style.minHeight = 0;
 
-            var title = new Label(_paths.Count == 0 ? "PREVIEW" : $"PREVIEW ({_paths.Count})");
-            title.AddToClassList("ar-section-title");
-            panel.Add(title);
-
             if (_paths.Count == 0)
             {
+                var title = new Label("PREVIEW");
+                title.AddToClassList("ar-section-title");
+                panel.Add(title);
                 panel.Add(new Label("Drop assets above to see the proposed names."));
                 return panel;
             }
 
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
-            scroll.style.flexGrow = 1f;
-            scroll.style.minHeight = 0;
-            panel.Add(scroll);
-
             var plans = BuildPlans();
+
+            int toRename = 0;
+            int issues = 0;
+            for (int i = 0; i < plans.Count; i++)
+            {
+                if (plans[i].m_status == RenameStatus.Ok) toRename++;
+                else if (plans[i].m_status == RenameStatus.Collision || plans[i].m_status == RenameStatus.Invalid) issues++;
+            }
+
+            var list = new VisualElement();
+            int visible = 0;
             for (int i = 0; i < plans.Count; i++)
             {
                 if (_hideUnchanged && plans[i].m_status == RenameStatus.Unchanged) continue;
-                scroll.Add(BuildRow(plans[i]));
+                list.Add(BuildRow(plans[i]));
+                visible++;
             }
 
+            panel.Add(BuildPreviewHeader(visible, toRename, issues));
+            panel.Add(list);
+
             return panel;
+        }
+
+        private VisualElement BuildPreviewHeader(int visible, int toRename, int issues)
+        {
+            var head = new VisualElement();
+            head.AddToClassList("ar-preview-head");
+
+            var title = new Label("PREVIEW");
+            title.AddToClassList("ar-preview-title");
+            head.Add(title);
+
+            var badge = new Label(visible.ToString());
+            badge.AddToClassList("ar-badge");
+            head.Add(badge);
+
+            var spacer = new VisualElement();
+            spacer.AddToClassList("ar-preview-spacer");
+            head.Add(spacer);
+
+            var counts = new VisualElement();
+            counts.AddToClassList("ar-preview-counts");
+            counts.style.flexDirection = FlexDirection.Row;
+
+            var renameLabel = new Label($"{toRename} to rename");
+            counts.Add(renameLabel);
+
+            var separator = new Label(" · ");
+            counts.Add(separator);
+
+            var issuesLabel = new Label($"{issues} issues");
+            if (issues > 0) issuesLabel.AddToClassList("ar-preview-issues");
+            counts.Add(issuesLabel);
+
+            head.Add(counts);
+
+            return head;
         }
 
         private VisualElement BuildRow(AssetRenamePlan plan)
         {
             var row = new VisualElement();
             row.AddToClassList("ar-row");
+
+            switch (plan.m_status)
+            {
+                case RenameStatus.Ok:        row.AddToClassList("ar-row--ok"); break;
+                case RenameStatus.Collision: row.AddToClassList("ar-row--collision"); break;
+                case RenameStatus.Invalid:   row.AddToClassList("ar-row--invalid"); break;
+                case RenameStatus.Excluded:  row.AddToClassList("ar-row--excluded"); break;
+                case RenameStatus.Unchanged: row.AddToClassList("ar-row--unchanged"); break;
+            }
 
             bool toggleable = plan.m_status == RenameStatus.Ok || plan.m_status == RenameStatus.Excluded;
             if (toggleable)
@@ -300,11 +473,6 @@ namespace AssetRenamer.Editor
                 row.Add(include);
             }
             if (plan.m_status == RenameStatus.Excluded) row.style.opacity = 0.5f;
-
-            var accent = new VisualElement();
-            accent.AddToClassList("ar-row-accent");
-            accent.style.backgroundColor = StatusColor(plan.m_status);
-            row.Add(accent);
 
             var content = new VisualElement();
             content.AddToClassList("ar-row-content");
@@ -511,6 +679,7 @@ namespace AssetRenamer.Editor
                 m_convention = _convention,
                 m_normalize = _normalize,
                 m_applyPrefix = _applyPrefix,
+                m_stripRedundantTypeTokens = _stripRedundantTypeTokens,
                 m_prefixTable = _prefixTable,
                 m_numberPadding = _numberPadding,
                 m_customPrefix = _customPrefix,
@@ -591,11 +760,7 @@ namespace AssetRenamer.Editor
         #region Private and Protected
 
         private const string STYLE_PATH = "Packages/com.tools.assetrenamer/Editor/src/AssetRenamerTheme.uss";
-        private const string BANNER_PATH = "Packages/com.tools.assetrenamer/Editor/src/AssetRenamerBanner.jpg";
-        private const string BANNER_ICON_PATH = "Packages/com.tools.assetrenamer/Editor/src/AssetRenamerIcon.jpg";
         private const float BANNER_MIN_WIDTH = 360f;
-        private const float BANNER_ASPECT = 4f;
-        private const float BANNER_ICON_HEIGHT = 110f;
         private const string DEFAULT_TABLE_PATH = "Assets/AssetTypePrefixTable.asset";
         private const string GIT_URL = "https://github.com/ZellTBH/asset-renamer.git";
         private const string MANIFEST_URL = "https://raw.githubusercontent.com/ZellTBH/asset-renamer/main/package.json";
@@ -606,6 +771,7 @@ namespace AssetRenamer.Editor
         [SerializeField] private bool _showConventionHelp;
         [SerializeField] private bool _normalize = true;
         [SerializeField] private bool _applyPrefix = true;
+        [SerializeField] private bool _stripRedundantTypeTokens = true;
         [SerializeField] private AssetTypePrefixTable _prefixTable;
         [SerializeField] private List<string> _paths = new List<string>();
         [SerializeField] private List<RenameRecord> _undo = new List<RenameRecord>();
@@ -619,6 +785,9 @@ namespace AssetRenamer.Editor
         [SerializeField] private bool _showAdvanced;
 
         private VisualElement _root;
+        private ScrollView _scroll;
+        private Texture2D _bannerTex;
+        private Texture2D _iconTex;
 
         private static bool _updateChecked;
         private static string _latestVersion;

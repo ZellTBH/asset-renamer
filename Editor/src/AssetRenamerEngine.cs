@@ -74,10 +74,15 @@ namespace AssetRenamer.Editor
 
             string body = PrepareBody(assetPath, options, out string prefix);
 
+            HashSet<string> redundantAliases = ResolveRedundantAliases(assetPath, prefix, options);
+            if (redundantAliases != null) body = RedundantTokenFilter.SplitGluedAliases(body, redundantAliases);
+
             string numberDigits = null;
             if (options.m_numberPadding != NumberPadding.Off) body = ExtractTrailingNumber(body, out numberDigits);
 
             var words = NameTokenizer.Tokenize(body);
+            if (redundantAliases != null) words = RedundantTokenFilter.Strip(words, redundantAliases);
+
             string formatted = NameFormatter.Format(words, options.m_convention);
 
             if (!string.IsNullOrEmpty(numberDigits)) formatted = AppendNumber(formatted, numberDigits, options.m_convention, options.m_numberPadding, autoWidth);
@@ -128,6 +133,13 @@ namespace AssetRenamer.Editor
             return body;
         }
 
+        private static HashSet<string> ResolveRedundantAliases(string assetPath, string prefix, RenameOptions options)
+        {
+            if (!options.m_stripRedundantTypeTokens || !options.m_applyPrefix) return null;
+            if (string.IsNullOrEmpty(prefix) || options.m_prefixTable == null) return null;
+            return RedundantTokenFilter.BuildAliasSet(prefix, options.m_prefixTable.ResolveAliases(assetPath));
+        }
+
         private static string ApplyFindReplace(string body, RenameOptions options)
         {
             if (string.IsNullOrEmpty(options.m_findText)) return body;
@@ -139,7 +151,27 @@ namespace AssetRenamer.Editor
         {
             string customPrefix = options.m_customPrefix ?? string.Empty;
             string customSuffix = options.m_customSuffix ?? string.Empty;
-            return customPrefix + formatted + customSuffix;
+            string sep = NameFormatter.Separator(options.m_convention);
+
+            string body = formatted;
+
+            if (!string.IsNullOrEmpty(customPrefix))
+            {
+                if (sep != "" && !customPrefix.EndsWith(sep) && !body.StartsWith(sep))
+                    body = customPrefix + sep + body;
+                else
+                    body = customPrefix + body;
+            }
+
+            if (!string.IsNullOrEmpty(customSuffix))
+            {
+                if (sep != "" && !body.EndsWith(sep) && !customSuffix.StartsWith(sep))
+                    body = body + sep + customSuffix;
+                else
+                    body = body + customSuffix;
+            }
+
+            return body;
         }
 
         private static string ExtractTrailingNumber(string body, out string digits)
